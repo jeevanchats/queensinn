@@ -110,6 +110,7 @@ export class SettingsComponent {
         { key: 'WhatsAppMessage', label: 'Default WhatsApp message' },
         { key: 'ReservationsEmail', label: 'Reservations email', type: 'email' },
         { key: 'SalesEmail', label: 'Sales & events email', type: 'email' },
+        { key: 'EnquiryCopyEmails', label: 'Also send enquiry copies to', wide: true, hint: 'Optional. Email addresses separated by commas, up to 10. They get a copy of every enquiry and are never shown on the website.' },
         { key: 'Address', label: 'Address', type: 'textarea' },
         { key: 'MapUrl', label: 'Google Maps link', type: 'url', wide: true },
       ],

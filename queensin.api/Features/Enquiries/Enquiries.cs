@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
+using queensin.api.Features.Site;
 using queensin.api.Common.Exceptions;
 using queensin.api.Common.Models;
 using queensin.api.Common.Security;
@@ -83,7 +84,7 @@ public sealed class SmtpEnquiryNotifier : IEnquiryNotifier
 
         try
         {
-            var settings = await _db.SiteSettings.AsNoTracking().Where(s => s.SettingKey == "ReservationsEmail" || s.SettingKey == "SalesEmail").ToDictionaryAsync(s => s.SettingKey, s => s.SettingValue, ct);
+            var settings = await _db.SiteSettings.AsNoTracking().Where(s => s.SettingKey == "ReservationsEmail" || s.SettingKey == "SalesEmail" || s.SettingKey == SiteService.EnquiryCopyKey).ToDictionaryAsync(s => s.SettingKey, s => s.SettingValue, ct);
             var to = e.Type == EnquiryTypes.Mahal ? (settings.GetValueOrDefault("SalesEmail") ?? settings.GetValueOrDefault("ReservationsEmail")) : settings.GetValueOrDefault("ReservationsEmail");
             if (string.IsNullOrWhiteSpace(to)) { _log.LogWarning("Enquiry {Ref}: no staff email address in Site settings.", reference); return; }
 
@@ -91,6 +92,8 @@ public sealed class SmtpEnquiryNotifier : IEnquiryNotifier
             var msg = new MimeMessage();
             msg.From.Add(new MailboxAddress("Queen's Inn website", from));
             msg.To.Add(MailboxAddress.Parse(to));
+            foreach (var extra in SiteService.SplitEmails(settings.GetValueOrDefault(SiteService.EnquiryCopyKey)))
+                if (!extra.Equals(to, StringComparison.OrdinalIgnoreCase) && MailboxAddress.TryParse(extra, out var copy)) msg.Cc.Add(copy);
             if (!string.IsNullOrWhiteSpace(e.Email) && MailboxAddress.TryParse(e.Email, out var guest)) msg.ReplyTo.Add(new MailboxAddress(e.Name, guest.Address));
             msg.Subject = $"[Queen's Inn] New {e.Type} enquiry {reference} — {e.Name}";
 

@@ -9,7 +9,8 @@ namespace queensin.api.Features.Site;
 
 public interface ISiteService
 {
-    Task<SiteDto> GetAsync(CancellationToken ct = default);
+    /// <param name="includePrivate">True only for signed-in admins: adds the settings the public site must never receive.</param>
+    Task<SiteDto> GetAsync(CancellationToken ct = default, bool includePrivate = false);
     Task<IReadOnlyDictionary<string, string?>> UpdateSettingsAsync(long actorId, Dictionary<string, string?> values, CancellationToken ct = default);
     Task<ThemeDto> UpdateThemeAsync(long actorId, ThemeDto theme, CancellationToken ct = default);
 }
@@ -32,8 +33,13 @@ public sealed partial class SiteService : ISiteService
         "ReservationsEmail", "SalesEmail", "Address", "MapUrl", "Latitude", "Longitude",
         "CheckInTime", "CheckOutTime", "LogoLightUrl", "LogoDarkUrl", "FaviconUrl",
         "FacebookUrl", "InstagramUrl", "YouTubeUrl", "GoogleProfileUrl", "GoogleAnalyticsId","ReserveAction", "ReserveLabel", "ReserveMessage",
-        "BookingLinks",
+        "BookingLinks", EnquiryCopyKey,
     };
+
+    /// <summary>Extra addresses that get a copy of every enquiry email. Staff only.</summary>
+    public const string EnquiryCopyKey = "EnquiryCopyEmails";
+    private static readonly HashSet<string> PrivateKeys = new(StringComparer.Ordinal) { EnquiryCopyKey };
+    private const int MaxCopyEmails = 10;
 
     private const int MaxBookingLinks = 8;
 
@@ -46,12 +52,12 @@ public sealed partial class SiteService : ISiteService
         _audit = audit;
     }
 
-    public async Task<SiteDto> GetAsync(CancellationToken ct = default)
+    public async Task<SiteDto> GetAsync(CancellationToken ct = default, bool includePrivate = false)
     {
         // A couple of dozen rows: load them all and filter here, rather than rely on the
         // provider translating HashSet.Contains.
         var rows = await _db.SiteSettings.AsNoTracking().ToListAsync(ct);
-        var settings = rows.Where(s => EditableKeys.Contains(s.SettingKey))
+        var settings = rows.Where(s => EditableKeys.Contains(s.SettingKey) && (includePrivate || !PrivateKeys.Contains(s.SettingKey)))
             .ToDictionary(s => s.SettingKey, s => s.SettingValue);
         return new SiteDto(settings, await GetThemeAsync(ct));
     }
@@ -71,6 +77,8 @@ public sealed partial class SiteService : ISiteService
 
         if (values.TryGetValue("BookingLinks", out var bl) && !string.IsNullOrWhiteSpace(bl)) ValidateBookingLinks(bl);
 
+        if (values.TryGetValue(EnquiryCopyKey, out var cc) && !string.IsNullOrWhiteSpace(cc)) values[EnquiryCopyKey] = NormaliseEmails(cc);
+
         var keys = values.Keys.ToList();
         var existing = await _db.SiteSettings.Where(s => keys.Contains(s.SettingKey)).ToListAsync(ct);
         foreach (var (key, raw) in values)
@@ -82,7 +90,22 @@ public sealed partial class SiteService : ISiteService
         }
         _audit.Record(actorId, "Update", "SiteSettings", null, string.Join(", ", values.Keys));
         await _db.SaveChangesAsync(ct);
-        return (await GetAsync(ct)).Settings;
+        return (await GetAsync(ct, includePrivate: true)).Settings;
+    }
+
+    /// <summary>Splits a list typed with commas, semicolons or new lines.</summary>
+    public static string[] SplitEmails(string? text)
+        => (text ?? "").Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string NormaliseEmails(string text)
+    {
+        var list = SplitEmails(text).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (list.Count > MaxCopyEmails) throw new AppException($"Add at most {MaxCopyEmails} copy addresses.");
+        var bad = list.FirstOrDefault(a => !Email().IsMatch(a));
+        if (bad is not null) throw new AppException($"“{bad}” is not an email address. Separate addresses with commas.");
+        var joined = string.Join(", ", list);
+        if (joined.Length > 500) throw new AppException("The list of copy addresses is too long.");
+        return joined;
     }
 
     /// <summary>One link per line, written as "Name | https://address". Only http(s) addresses are accepted, because the site turns each line into a button.</summary>
@@ -172,6 +195,9 @@ public sealed partial class SiteService : ISiteService
         var (l1, l2) = (Lum(a), Lum(b));
         return (Math.Max(l1, l2) + 0.05) / (Math.Min(l1, l2) + 0.05);
     }
+
+    [GeneratedRegex(@"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+$")]
+    private static partial Regex Email();
 
     [GeneratedRegex("^#[0-9a-fA-F]{6}$")]
     private static partial Regex Hex();

@@ -31,7 +31,7 @@ public sealed class SiteController : ControllerBase
     [HttpGet("api/admin/settings")]
     [Authorize(Policy = Perm.SettingsManage)]
     public async Task<IActionResult> GetSettings(CancellationToken ct)
-        => Ok(ApiResponse<IReadOnlyDictionary<string, string?>>.Ok((await _site.GetAsync(ct)).Settings));
+        => Ok(ApiResponse<IReadOnlyDictionary<string, string?>>.Ok((await _site.GetAsync(ct, includePrivate: true)).Settings));
 
     [HttpPut("api/admin/settings")]
     [Authorize(Policy = Perm.SettingsManage)]
